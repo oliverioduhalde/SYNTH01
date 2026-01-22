@@ -49,8 +49,8 @@ class GameScene extends Phaser.Scene {
     this.powerGroup = this.add.group();
     this.ghostGroup = this.add.group();
 
-    this.player = this.add.circle(0, 0, 10, 0xffe85b);
-    this.player.setStrokeStyle(2, 0xfff7a5, 1);
+    this.player = this.add.graphics();
+    this.player.setDepth(3);
     this.board.add(this.player);
 
     this.levelMessage = this.add.text(0, 0, "", {
@@ -128,7 +128,7 @@ class GameScene extends Phaser.Scene {
     this.pelletMap = new Map();
     this.powerMap = new Map();
     this.activeEffects.clear();
-    this.player.setScale(1);
+    this.player.clear();
   }
 
   buildLevel() {
@@ -143,11 +143,7 @@ class GameScene extends Phaser.Scene {
   }
 
   getGridSize() {
-    const minSize = Math.min(this.scale.width, this.scale.height - 90);
-    const base = Math.max(17, Math.floor(minSize / 18));
-    const cols = base % 2 === 0 ? base + 1 : base;
-    const rows = cols;
-    return { cols, rows };
+    return { cols: 27, rows: 31 };
   }
 
   generateMaze(cols, rows) {
@@ -242,16 +238,38 @@ class GameScene extends Phaser.Scene {
     this.offsetY = offsetY;
 
     this.wallGraphics.clear();
-    this.wallGraphics.lineStyle(2, 0x37f6ff, 0.7);
-    this.wallGraphics.fillStyle(0x101629, 1);
+    const stroke = Math.max(2, tileSize * 0.18);
+    const color = 0x37f6ff;
+    const alpha = 0.85;
+    this.wallGraphics.lineStyle(stroke, color, alpha);
+    this.wallGraphics.fillStyle(color, alpha);
 
-    for (let y = 0; y < this.grid.length; y += 1) {
-      for (let x = 0; x < this.grid[0].length; x += 1) {
+    const rows = this.grid.length;
+    const cols = this.grid[0].length;
+    const capRadius = stroke * 0.5;
+    const drawSegment = (x1, y1, x2, y2) => {
+      this.wallGraphics.lineBetween(x1, y1, x2, y2);
+      this.wallGraphics.fillCircle(x1, y1, capRadius);
+      this.wallGraphics.fillCircle(x2, y2, capRadius);
+    };
+
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < cols; x += 1) {
         if (this.grid[y][x] === 1) {
           const px = x * tileSize;
           const py = y * tileSize;
-          this.wallGraphics.strokeRect(px, py, tileSize, tileSize);
-          this.wallGraphics.fillRect(px, py, tileSize, tileSize);
+          if (y === 0 || this.grid[y - 1][x] === 0) {
+            drawSegment(px, py, px + tileSize, py);
+          }
+          if (y === rows - 1 || this.grid[y + 1][x] === 0) {
+            drawSegment(px, py + tileSize, px + tileSize, py + tileSize);
+          }
+          if (x === 0 || this.grid[y][x - 1] === 0) {
+            drawSegment(px, py, px, py + tileSize);
+          }
+          if (x === cols - 1 || this.grid[y][x + 1] === 0) {
+            drawSegment(px + tileSize, py, px + tileSize, py + tileSize);
+          }
         }
       }
     }
@@ -351,7 +369,14 @@ class GameScene extends Phaser.Scene {
 
     const doorTiles = Phaser.Utils.Array.Shuffle(candidates).slice(0, 6);
     doorTiles.forEach((tile) => {
-      const rect = this.add.rectangle(0, 0, this.tileSize, this.tileSize, 0xff2bd6, 0.7);
+      const leftOpen = this.grid[tile.y][tile.x - 1] === 0;
+      const rightOpen = this.grid[tile.y][tile.x + 1] === 0;
+      const upOpen = this.grid[tile.y - 1][tile.x] === 0;
+      const downOpen = this.grid[tile.y + 1][tile.x] === 0;
+      const vertical = leftOpen && rightOpen;
+      const width = vertical ? this.tileSize * 0.2 : this.tileSize * 0.8;
+      const height = vertical ? this.tileSize * 0.8 : this.tileSize * 0.2;
+      const rect = this.add.rectangle(0, 0, width, height, 0xff2bd6, 0.7);
       rect.setStrokeStyle(2, 0xff2bd6, 1);
       rect.tile = { ...tile };
       this.positionObject(rect, tile.x, tile.y);
@@ -362,6 +387,7 @@ class GameScene extends Phaser.Scene {
         open: false,
         timer: 0,
         interval: Phaser.Math.Between(2000, 5000),
+        vertical,
       };
       this.doors.push(door);
     });
@@ -369,26 +395,26 @@ class GameScene extends Phaser.Scene {
 
   buildGhosts() {
     const colors = [0xff2bd6, 0x37f6ff, 0xff274c, 0x9aff3b];
+    const types = ["blinky", "pinky", "inky", "clyde"];
     this.spawnPoints.ghosts.forEach((spawn, index) => {
-      const body = this.add.rectangle(0, 0, this.tileSize * 0.7, this.tileSize * 0.7, colors[index], 0.9);
-      const head1 = this.add.circle(-this.tileSize * 0.12, -this.tileSize * 0.15, this.tileSize * 0.18, 0xffffff);
-      const head2 = this.add.circle(this.tileSize * 0.12, -this.tileSize * 0.15, this.tileSize * 0.18, 0xffffff);
-      const container = this.add.container(0, 0, [body, head1, head2]);
-      this.positionObject(container, spawn.x, spawn.y);
-      container.setDepth(2);
-      container.baseTileSize = this.tileSize;
-      this.ghostGroup.add(container);
-      this.board.add(container);
-      container.ghostData = {
+      const enemy = this.add.graphics();
+      this.positionObject(enemy, spawn.x, spawn.y);
+      enemy.setDepth(2);
+      this.ghostGroup.add(enemy);
+      this.board.add(enemy);
+      enemy.ghostData = {
         tileX: spawn.x,
         tileY: spawn.y,
         dir: { x: 0, y: 0 },
         moving: false,
         speed: 70,
         color: colors[index],
+        renderColor: colors[index],
         mode: "normal",
         lastPortal: 0,
         spawnIndex: index,
+        type: types[index],
+        animOffset: Phaser.Math.Between(0, 1000),
       };
     });
   }
@@ -402,9 +428,9 @@ class GameScene extends Phaser.Scene {
       moving: false,
       speed: 90 + this.levelIndex * 8,
       canPassWalls: false,
+      superActive: false,
       lastPortal: 0,
     };
-    this.player.baseTileSize = this.tileSize;
     this.positionObject(this.player, this.playerData.tileX, this.playerData.tileY);
 
     this.ghostGroup.getChildren().forEach((ghost, index) => {
@@ -414,6 +440,7 @@ class GameScene extends Phaser.Scene {
       ghost.ghostData.dir = { x: 0, y: 0 };
       ghost.ghostData.moving = false;
       ghost.ghostData.mode = "normal";
+      ghost.ghostData.renderColor = ghost.ghostData.color;
       ghost.ghostData.speed = 70 + this.levelIndex * 6;
       ghost.ghostData.lastPortal = 0;
       this.positionObject(ghost, spawn.x, spawn.y);
@@ -476,6 +503,82 @@ class GameScene extends Phaser.Scene {
     this.playerData.nextDir = { ...DIRS[dirKey] };
   }
 
+  getDirectionAngle(dir) {
+    if (dir.x === 1) {
+      return 0;
+    }
+    if (dir.x === -1) {
+      return Math.PI;
+    }
+    if (dir.y === -1) {
+      return -Math.PI / 2;
+    }
+    if (dir.y === 1) {
+      return Math.PI / 2;
+    }
+    return 0;
+  }
+
+  drawPacman(graphics, color, angle, mouth, size, background) {
+    const radius = size * 0.5;
+    graphics.clear();
+    graphics.fillStyle(color, 0.95);
+    graphics.beginPath();
+    graphics.moveTo(0, 0);
+    graphics.arc(0, 0, radius, angle + mouth, angle - mouth, false);
+    graphics.closePath();
+    graphics.fillPath();
+    if (background) {
+      graphics.fillStyle(background, 1);
+      graphics.beginPath();
+      graphics.moveTo(0, 0);
+      graphics.arc(0, 0, radius * 0.55, angle + mouth * 0.8, angle - mouth * 0.8, false);
+      graphics.closePath();
+      graphics.fillPath();
+    }
+  }
+
+  drawSquidPlayer(time) {
+    const size = this.tileSize * (this.playerData.superActive ? 1.2 : 0.9);
+    const radius = size * 0.5;
+    const angle = this.getDirectionAngle(this.playerData.dir);
+    const mouth = 0.35 + 0.15 * Math.sin(time * 0.008);
+    const bodyColor = 0xffe85b;
+    const bgColor = 0x0a0a12;
+
+    this.player.clear();
+    this.player.fillStyle(bodyColor, 0.98);
+    this.player.beginPath();
+    this.player.arc(0, -radius * 0.1, radius, Math.PI, 0, false);
+    this.player.lineTo(radius, radius * 0.7);
+    const tentacleCount = 4;
+    for (let i = tentacleCount; i >= 0; i -= 1) {
+      const x = radius - (i * radius * 2) / tentacleCount;
+      const y = radius * 0.9 + (i % 2 === 0 ? radius * 0.12 : -radius * 0.08);
+      this.player.lineTo(x, y);
+    }
+    this.player.lineTo(-radius, radius * 0.7);
+    this.player.closePath();
+    this.player.fillPath();
+
+    this.player.fillStyle(bgColor, 1);
+    this.player.beginPath();
+    this.player.moveTo(0, 0);
+    this.player.arc(0, 0, radius * 0.65, angle + mouth, angle - mouth, false);
+    this.player.closePath();
+    this.player.fillPath();
+  }
+
+  drawEnemies(time) {
+    this.ghostGroup.getChildren().forEach((ghost) => {
+      const data = ghost.ghostData;
+      const angle = this.getDirectionAngle(data.dir);
+      const mouth = 0.28 + 0.18 * Math.abs(Math.sin((time + data.animOffset) * 0.007));
+      const size = this.tileSize * 0.85;
+      this.drawPacman(ghost, data.renderColor, angle, mouth, size, null);
+    });
+  }
+
   update(time, delta) {
     if (!this.isPlaying) {
       return;
@@ -485,6 +588,8 @@ class GameScene extends Phaser.Scene {
     this.updateDoors(delta);
     this.updatePlayer(delta);
     this.updateGhosts(delta);
+    this.drawSquidPlayer(time);
+    this.drawEnemies(time);
     this.checkCollisions();
   }
 
@@ -538,7 +643,7 @@ class GameScene extends Phaser.Scene {
       const speed = data.speed * speedMultiplier;
 
       if (!data.moving) {
-        const target = this.getGhostTarget(data);
+        const target = this.getGhostTarget(ghost);
         const dir = this.chooseGhostDirection(data, target);
         if (dir) {
           data.dir = dir;
@@ -628,12 +733,50 @@ class GameScene extends Phaser.Scene {
     return scored[0].dir;
   }
 
-  getGhostTarget(data) {
+  getGhostTarget(ghost) {
+    const data = ghost.ghostData;
     const playerTile = { x: this.playerData.tileX, y: this.playerData.tileY };
+    const cols = this.grid[0].length;
+    const rows = this.grid.length;
+    const clampTarget = (target) => ({
+      x: Phaser.Math.Clamp(target.x, 1, cols - 2),
+      y: Phaser.Math.Clamp(target.y, 1, rows - 2),
+    });
+
     if (data.mode === "fright") {
-      return { x: this.grid[0].length - playerTile.x, y: this.grid.length - playerTile.y };
+      return clampTarget({ x: cols - playerTile.x, y: rows - playerTile.y });
     }
-    return playerTile;
+
+    if (data.mode === "fruit") {
+      return { x: Phaser.Math.Between(1, cols - 2), y: Phaser.Math.Between(1, rows - 2) };
+    }
+
+    switch (data.type) {
+      case "pinky": {
+        const dir = this.playerData.dir;
+        return clampTarget({ x: playerTile.x + dir.x * 4, y: playerTile.y + dir.y * 4 });
+      }
+      case "inky": {
+        const blinky = this.ghostGroup.getChildren().find((g) => g.ghostData.type === "blinky");
+        const dir = this.playerData.dir;
+        const ahead = { x: playerTile.x + dir.x * 2, y: playerTile.y + dir.y * 2 };
+        if (blinky) {
+          const vec = { x: ahead.x - blinky.ghostData.tileX, y: ahead.y - blinky.ghostData.tileY };
+          return clampTarget({ x: ahead.x + vec.x, y: ahead.y + vec.y });
+        }
+        return clampTarget(ahead);
+      }
+      case "clyde": {
+        const distance = Phaser.Math.Distance.Between(data.tileX, data.tileY, playerTile.x, playerTile.y);
+        if (distance > 8) {
+          return playerTile;
+        }
+        return { x: 1, y: rows - 2 };
+      }
+      case "blinky":
+      default:
+        return playerTile;
+    }
   }
 
   getAvailableDirs(x, y, canPassWalls) {
@@ -721,11 +864,11 @@ class GameScene extends Phaser.Scene {
     this.ghostGroup.getChildren().forEach((ghost) => {
       ghost.ghostData.mode = mode;
       if (mode === "fright") {
-        ghost.list[0].fillColor = 0x3b6bff;
+        ghost.ghostData.renderColor = 0x3b6bff;
       } else if (mode === "fruit") {
-        ghost.list[0].fillColor = 0xffa43b;
+        ghost.ghostData.renderColor = 0xffa43b;
       } else {
-        ghost.list[0].fillColor = ghost.ghostData.color;
+        ghost.ghostData.renderColor = ghost.ghostData.color;
       }
     });
   }
@@ -758,9 +901,8 @@ class GameScene extends Phaser.Scene {
       }
     }
     const superActive = this.activeEffects.has("super");
-    const baseScale = this.player.baseTileSize ? this.tileSize / this.player.baseTileSize : 1;
-    this.player.setScale(baseScale * (superActive ? 1.4 : 1));
     this.playerData.canPassWalls = superActive;
+    this.playerData.superActive = superActive;
     this.applyGhostMode();
   }
 
@@ -890,20 +1032,15 @@ class GameScene extends Phaser.Scene {
     });
     this.doors.forEach((door) => {
       this.positionObject(door.sprite, door.x, door.y);
-      door.sprite.width = this.tileSize;
-      door.sprite.height = this.tileSize;
+      door.sprite.width = door.vertical ? this.tileSize * 0.2 : this.tileSize * 0.8;
+      door.sprite.height = door.vertical ? this.tileSize * 0.8 : this.tileSize * 0.2;
     });
-    if (this.player.baseTileSize) {
-      const playerScale = this.tileSize / this.player.baseTileSize;
-      this.player.setScale(playerScale * (this.activeEffects.has("super") ? 1.4 : 1));
-    }
     this.positionObject(this.player, this.playerData.tileX, this.playerData.tileY);
     this.ghostGroup.getChildren().forEach((ghost) => {
       this.positionObject(ghost, ghost.ghostData.tileX, ghost.ghostData.tileY);
-      if (ghost.baseTileSize) {
-        ghost.setScale(this.tileSize / ghost.baseTileSize);
-      }
     });
+    this.drawSquidPlayer(this.time.now);
+    this.drawEnemies(this.time.now);
   }
 }
 
