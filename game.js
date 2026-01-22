@@ -149,6 +149,33 @@ class GameScene extends Phaser.Scene {
   }
 
   generateMaze(cols, rows) {
+    const halfCols = Math.floor(cols / 2);
+    const left = this.generateHalfMaze(halfCols, rows);
+    this.braidDeadEnds(left, 2);
+    this.addExtraLoops(left, rows);
+    this.openCenterLinks(left, 3);
+
+    const grid = Array.from({ length: rows }, () => Array(cols).fill(1));
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < halfCols; x += 1) {
+        grid[y][x] = left[y][x];
+        grid[y][cols - 1 - x] = left[y][x];
+      }
+    }
+
+    for (let x = 0; x < cols; x += 1) {
+      grid[0][x] = 1;
+      grid[rows - 1][x] = 1;
+    }
+    for (let y = 0; y < rows; y += 1) {
+      grid[y][0] = 1;
+      grid[y][cols - 1] = 1;
+    }
+
+    return grid;
+  }
+
+  generateHalfMaze(cols, rows) {
     const grid = Array.from({ length: rows }, () => Array(cols).fill(1));
     const stack = [];
     const start = { x: 1, y: 1 };
@@ -184,11 +211,42 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    const loops = Phaser.Math.Between(1, 2);
+    return grid;
+  }
+
+  braidDeadEnds(grid, passes) {
+    for (let pass = 0; pass < passes; pass += 1) {
+      const deadEnds = [];
+      for (let y = 1; y < grid.length - 1; y += 1) {
+        for (let x = 1; x < grid[0].length - 1; x += 1) {
+          if (grid[y][x] === 0 && this.countFloorNeighbors(grid, x, y) <= 1) {
+            deadEnds.push({ x, y });
+          }
+        }
+      }
+
+      Phaser.Utils.Array.Shuffle(deadEnds).forEach((cell) => {
+        const options = [
+          { x: 1, y: 0 },
+          { x: -1, y: 0 },
+          { x: 0, y: 1 },
+          { x: 0, y: -1 },
+        ].filter((dir) => grid[cell.y + dir.y][cell.x + dir.x] === 1);
+        if (options.length) {
+          const pick = Phaser.Utils.Array.GetRandom(options);
+          grid[cell.y + pick.y][cell.x + pick.x] = 0;
+        }
+      });
+    }
+  }
+
+  addExtraLoops(grid, attempts) {
     let added = 0;
-    while (added < loops) {
-      const wx = Phaser.Math.Between(2, cols - 3);
-      const wy = Phaser.Math.Between(2, rows - 3);
+    let tries = 0;
+    while (added < attempts && tries < attempts * 4) {
+      tries += 1;
+      const wx = Phaser.Math.Between(1, grid[0].length - 2);
+      const wy = Phaser.Math.Between(1, grid.length - 2);
       if (grid[wy][wx] === 1) {
         const neighbors = this.countFloorNeighbors(grid, wx, wy);
         if (neighbors >= 2) {
@@ -197,8 +255,20 @@ class GameScene extends Phaser.Scene {
         }
       }
     }
+  }
 
-    return grid;
+  openCenterLinks(grid, count) {
+    const x = grid[0].length - 1;
+    const candidates = [];
+    for (let y = 2; y < grid.length - 2; y += 1) {
+      if (grid[y][x - 1] === 0) {
+        candidates.push(y);
+      }
+    }
+    Phaser.Utils.Array.Shuffle(candidates);
+    candidates.slice(0, count).forEach((y) => {
+      grid[y][x] = 0;
+    });
   }
 
   countFloorNeighbors(grid, x, y) {
@@ -248,11 +318,8 @@ class GameScene extends Phaser.Scene {
 
     const rows = this.grid.length;
     const cols = this.grid[0].length;
-    const capRadius = stroke * 0.5;
     const drawSegment = (x1, y1, x2, y2) => {
       this.wallGraphics.lineBetween(x1, y1, x2, y2);
-      this.wallGraphics.fillCircle(x1, y1, capRadius);
-      this.wallGraphics.fillCircle(x2, y2, capRadius);
     };
 
     for (let y = 0; y < rows; y += 1) {
@@ -1005,8 +1072,8 @@ class GameScene extends Phaser.Scene {
   }
 
   layoutBoard() {
-    const maxWidth = this.scale.width;
-    const maxHeight = this.scale.height - 90;
+    const maxWidth = this.scale.width * 0.75;
+    const maxHeight = (this.scale.height - 90) * 0.75;
     const tileSize = Math.floor(Math.min(maxWidth / this.grid[0].length, maxHeight / this.grid.length));
     const boardWidth = tileSize * this.grid[0].length;
     const boardHeight = tileSize * this.grid.length;
