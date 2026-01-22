@@ -153,6 +153,7 @@ class GameScene extends Phaser.Scene {
     const left = this.generateHalfMaze(halfCols, rows);
     this.braidDeadEnds(left, 2);
     this.addExtraLoops(left, rows);
+    this.thinDoubleCorridors(left, 2);
     this.openCenterLinks(left, 3);
 
     const grid = Array.from({ length: rows }, () => Array(cols).fill(1));
@@ -240,6 +241,31 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  thinDoubleCorridors(grid, passes) {
+    for (let pass = 0; pass < passes; pass += 1) {
+      for (let y = 1; y < grid.length - 1; y += 1) {
+        for (let x = 1; x < grid[0].length - 2; x += 1) {
+          if (grid[y][x] === 0 && grid[y][x + 1] === 0) {
+            const candidate = { x: x + 1, y };
+            if (this.countFloorNeighbors(grid, candidate.x, candidate.y) >= 3) {
+              grid[candidate.y][candidate.x] = 1;
+            }
+          }
+        }
+      }
+      for (let y = 1; y < grid.length - 2; y += 1) {
+        for (let x = 1; x < grid[0].length - 1; x += 1) {
+          if (grid[y][x] === 0 && grid[y + 1][x] === 0) {
+            const candidate = { x, y: y + 1 };
+            if (this.countFloorNeighbors(grid, candidate.x, candidate.y) >= 3) {
+              grid[candidate.y][candidate.x] = 1;
+            }
+          }
+        }
+      }
+    }
+  }
+
   addExtraLoops(grid, attempts) {
     let added = 0;
     let tries = 0;
@@ -310,10 +336,10 @@ class GameScene extends Phaser.Scene {
     this.offsetY = offsetY;
 
     this.wallGraphics.clear();
-    const stroke = Math.max(1, tileSize * 0.08);
+    const stroke = 3;
     const color = this.wallColor ?? 0x37f6ff;
     const alpha = 0.85;
-    this.wallGraphics.lineStyle(stroke, color, alpha);
+    this.wallGraphics.lineStyle(stroke, color, alpha, "round", "round");
     this.wallGraphics.fillStyle(color, alpha);
 
     const rows = this.grid.length;
@@ -372,6 +398,7 @@ class GameScene extends Phaser.Scene {
         const power = this.add.circle(0, 0, this.tileSize * 0.22, powerType.color);
         power.setStrokeStyle(2, 0xffffff, 0.9);
         power.baseTileSize = this.tileSize;
+        power.baseScale = 1;
         power.pulseOffset = Phaser.Math.FloatBetween(0, Math.PI * 2);
         power.tile = { ...tile };
         this.positionObject(power, tile.x, tile.y);
@@ -384,6 +411,7 @@ class GameScene extends Phaser.Scene {
         pellet.setAlpha(0.9);
         pellet.setStrokeStyle(1, 0x37f6ff, 0.8);
         pellet.baseTileSize = this.tileSize;
+        pellet.baseScale = 1;
         pellet.pulseOffset = Phaser.Math.FloatBetween(0, Math.PI * 2);
         pellet.tile = { ...tile };
         this.positionObject(pellet, tile.x, tile.y);
@@ -620,22 +648,29 @@ class GameScene extends Phaser.Scene {
     this.player.fillStyle(bodyColor, 0.98);
     this.player.beginPath();
     this.player.arc(0, -radius * 0.1, radius, Math.PI, 0, false);
-    this.player.lineTo(radius, radius * 0.7);
+    this.player.lineTo(radius * 0.8, radius * 1.1);
     const tentacleCount = 4;
     const wave = time * 0.01;
     for (let i = tentacleCount; i >= 0; i -= 1) {
       const x = radius - (i * radius * 2) / tentacleCount;
-      const wobble = Math.sin(wave + i * 0.9) * radius * 0.08;
-      const y = radius * 0.88 + wobble;
+      const wobble = Math.sin(wave + i * 0.9) * radius * 0.12;
+      const y = radius * 1.25 + wobble;
       this.player.lineTo(x, y);
     }
-    this.player.lineTo(-radius, radius * 0.7);
+    this.player.lineTo(-radius * 0.8, radius * 1.1);
     this.player.closePath();
     this.player.fillPath();
+    for (let i = 0; i < 4; i += 1) {
+      const trailAlpha = 0.2 - i * 0.04;
+      const trailY = radius * (1.35 + i * 0.22);
+      this.player.fillStyle(bodyColor, Math.max(trailAlpha, 0.05));
+      this.player.fillEllipse(0, trailY, radius * (1.1 - i * 0.18), radius * 0.5);
+    }
     const eyeOffset = radius * 0.22;
     this.player.fillStyle(bgColor, 0.9);
     this.player.fillCircle(-eyeOffset, -radius * 0.05, radius * 0.12);
     this.player.fillCircle(eyeOffset, -radius * 0.05, radius * 0.12);
+    this.player.rotation = angle + Math.PI / 2;
   }
 
   drawEnemies(time) {
@@ -675,11 +710,13 @@ class GameScene extends Phaser.Scene {
     const basePulse = Math.sin(time * 0.006);
     this.pelletGroup.getChildren().forEach((pellet) => {
       const pulse = 1 + 0.12 * Math.sin(time * 0.01 + pellet.pulseOffset) + 0.04 * basePulse;
-      pellet.setScale(pellet.baseScale * pulse);
+      const base = pellet.baseScale || 1;
+      pellet.setScale(base * pulse);
     });
     this.powerGroup.getChildren().forEach((power) => {
       const pulse = 1 + 0.22 * Math.sin(time * 0.012 + power.pulseOffset);
-      power.setScale(power.baseScale * pulse);
+      const base = power.baseScale || 1;
+      power.setScale(base * pulse);
     });
   }
 
@@ -797,7 +834,7 @@ class GameScene extends Phaser.Scene {
       data.pathHistory.shift();
     }
 
-    const playerStill = !this.playerData.moving && this.playerData.dir.x === 0 && this.playerData.dir.y === 0;
+    const playerStill = !this.playerData.moving;
     if (!playerStill) {
       data.loopCount = 0;
       data.forceRandom = false;
@@ -1124,13 +1161,14 @@ class GameScene extends Phaser.Scene {
 
   layoutBoard() {
     const padding = Math.max(8, Math.floor(Math.min(this.scale.width, this.scale.height) * 0.03));
+    const hudOffset = 90;
     const maxWidth = this.scale.width - padding * 2;
-    const maxHeight = this.scale.height - padding * 2;
+    const maxHeight = this.scale.height - padding * 2 - hudOffset;
     const tileSize = Math.floor(Math.min(maxWidth / this.grid[0].length, maxHeight / this.grid.length));
     const boardWidth = tileSize * this.grid[0].length;
     const boardHeight = tileSize * this.grid.length;
     const offsetX = (this.scale.width - boardWidth) / 2;
-    const offsetY = (this.scale.height - boardHeight) / 2;
+    const offsetY = (this.scale.height - boardHeight) / 2 + hudOffset * 0.5;
     return { tileSize, offsetX, offsetY };
   }
 
