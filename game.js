@@ -529,6 +529,10 @@ class GameScene extends Phaser.Scene {
       canPassWalls: false,
       superActive: false,
       lastPortal: 0,
+      usingPath: false,
+      path: null,
+      pathIndex: 0,
+      pathTarget: null,
     };
     this.positionObject(this.player, this.playerData.tileX, this.playerData.tileY);
 
@@ -555,13 +559,7 @@ class GameScene extends Phaser.Scene {
       const localX = pointer.x - rect.left;
       const localY = pointer.y - rect.top;
       const target = this.worldToTile(localX - this.board.x, localY - this.board.y);
-      const dx = target.x - this.playerData.tileX;
-      const dy = target.y - this.playerData.tileY;
-      if (Math.abs(dx) > Math.abs(dy)) {
-        this.queueDirection(dx > 0 ? "right" : "left");
-      } else if (Math.abs(dy) > 0) {
-        this.queueDirection(dy > 0 ? "down" : "up");
-      }
+      this.setPathToTarget(target);
     });
 
     CONTROLS.addEventListener("click", (event) => {
@@ -598,8 +596,108 @@ class GameScene extends Phaser.Scene {
     });
   }
 
-  queueDirection(dirKey) {
+  queueDirection(dirKey, source = "manual") {
+    if (source === "manual") {
+      this.clearPath();
+    }
     this.playerData.nextDir = { ...DIRS[dirKey] };
+  }
+
+  clearPath() {
+    this.playerData.usingPath = false;
+    this.playerData.path = null;
+    this.playerData.pathIndex = 0;
+    this.playerData.pathTarget = null;
+  }
+
+  setPathToTarget(target) {
+    const start = { x: this.playerData.tileX, y: this.playerData.tileY };
+    const result = this.findPath(start, target, this.playerData.canPassWalls);
+    if (!result || result.path.length < 2) {
+      return;
+    }
+    this.playerData.usingPath = true;
+    this.playerData.path = result.path;
+    this.playerData.pathIndex = 1;
+    this.playerData.pathTarget = result.target;
+  }
+
+  findPath(start, target, canPassWalls) {
+    const rows = this.grid.length;
+    const cols = this.grid[0].length;
+    const keyFor = (pos) => `${pos.x},${pos.y}`;
+    const queue = [start];
+    const visited = new Set([keyFor(start)]);
+    const cameFrom = new Map();
+    let best = start;
+    let bestScore = Math.abs(start.x - target.x) + Math.abs(start.y - target.y);
+
+    while (queue.length) {
+      const current = queue.shift();
+      const score = Math.abs(current.x - target.x) + Math.abs(current.y - target.y);
+      if (score < bestScore) {
+        best = current;
+        bestScore = score;
+      }
+      if (current.x === target.x && current.y === target.y) {
+        best = current;
+        break;
+      }
+      const neighbors = this.getPathNeighbors(current, canPassWalls);
+      neighbors.forEach((neighbor) => {
+        const key = keyFor(neighbor);
+        if (!visited.has(key)) {
+          visited.add(key);
+          cameFrom.set(key, keyFor(current));
+          queue.push(neighbor);
+        }
+      });
+    }
+
+    const bestKey = keyFor(best);
+    if (bestKey !== keyFor(start) && !cameFrom.has(bestKey)) {
+      return null;
+    }
+    const path = [best];
+    let currentKey = bestKey;
+    while (currentKey !== keyFor(start)) {
+      const prevKey = cameFrom.get(currentKey);
+      if (!prevKey) {
+        break;
+      }
+      const [x, y] = prevKey.split(",").map((value) => parseInt(value, 10));
+      path.unshift({ x, y });
+      currentKey = prevKey;
+    }
+    return { path, target: best };
+  }
+
+  getPathNeighbors(tile, canPassWalls) {
+    const neighbors = [];
+    const dirs = [DIRS.up, DIRS.down, DIRS.left, DIRS.right];
+    dirs.forEach((dir) => {
+      const nx = tile.x + dir.x;
+      const ny = tile.y + dir.y;
+      if (this.isWalkable(nx, ny, canPassWalls)) {
+        neighbors.push({ x: nx, y: ny });
+      }
+    });
+    const portal = this.getPortalAt(tile.x, tile.y);
+    if (portal) {
+      const pair = this.getPortalPair(portal);
+      if (pair) {
+        neighbors.push({ x: pair.x, y: pair.y });
+      }
+    }
+    return neighbors;
+  }
+
+  getPortalAt(x, y) {
+    return this.portals.find((portal) => portal.x === x && portal.y === y);
+  }
+
+  getPortalPair(portal) {
+    return this.portals.find((candidate) => candidate.id === portal.pair);
   }
 
   getDirectionAngle(dir) {
@@ -754,6 +852,10 @@ class GameScene extends Phaser.Scene {
     const canPass = player.canPassWalls;
 
     if (!player.moving) {
+      if (player.usingPath) {
+        this.advancePlayerPath();
+        this.updatePathDirection();
+      }
       const next = this.getNextDirection(player.nextDir, player, canPass);
       if (next) {
         player.dir = next;
@@ -764,6 +866,9 @@ class GameScene extends Phaser.Scene {
         };
       } else {
         player.dir = { x: 0, y: 0 };
+        if (player.usingPath && player.pathTarget) {
+          this.setPathToTarget(player.pathTarget);
+        }
       }
     }
 
@@ -817,8 +922,43 @@ class GameScene extends Phaser.Scene {
 
       if (sprite === this.player) {
         this.collectPellet(data.tileX, data.tileY);
+        this.advancePlayerPath();
       } else {
         this.trackGhostHistory(data);
+      }
+    }
+  }
+
+  updatePathDirection() {
+    const player = this.playerData;
+    if (!player.path || player.pathIndex >= player.path.length) {
+      this.clearPath();
+      return;
+    }
+    const next = player.path[player.pathIndex];
+    const dx = next.x - player.tileX;
+    const dy = next.y - player.tileY;
+    if (Math.abs(dx) + Math.abs(dy) === 1) {
+      player.nextDir = { x: dx, y: dy };
+    }
+  }
+
+  advancePlayerPath() {
+    const player = this.playerData;
+    if (!player.path || player.pathIndex >= player.path.length) {
+      return;
+    }
+    const next = player.path[player.pathIndex];
+    if (next.x === player.tileX && next.y === player.tileY) {
+      player.pathIndex += 1;
+      return;
+    }
+    if (player.pathIndex < player.path.length - 1) {
+      const expectedPortal = player.path[player.pathIndex];
+      const nextAfter = player.path[player.pathIndex + 1];
+      const portal = this.getPortalAt(expectedPortal.x, expectedPortal.y);
+      if (portal && nextAfter.x === player.tileX && nextAfter.y === player.tileY) {
+        player.pathIndex += 2;
       }
     }
   }
