@@ -44,6 +44,8 @@ class GameScene extends Phaser.Scene {
     this.portalGraphics = this.add.graphics();
     this.board.add(this.wallGraphics);
     this.board.add(this.portalGraphics);
+    this.wallColor = 0x37f6ff;
+    this.lastWallPulse = 0;
 
     this.pelletGroup = this.add.group();
     this.powerGroup = this.add.group();
@@ -143,7 +145,7 @@ class GameScene extends Phaser.Scene {
   }
 
   getGridSize() {
-    return { cols: 27, rows: 31 };
+    return { cols: 28, rows: 31 };
   }
 
   generateMaze(cols, rows) {
@@ -239,7 +241,7 @@ class GameScene extends Phaser.Scene {
 
     this.wallGraphics.clear();
     const stroke = Math.max(2, tileSize * 0.18);
-    const color = 0x37f6ff;
+    const color = this.wallColor ?? 0x37f6ff;
     const alpha = 0.85;
     this.wallGraphics.lineStyle(stroke, color, alpha);
     this.wallGraphics.fillStyle(color, alpha);
@@ -552,9 +554,11 @@ class GameScene extends Phaser.Scene {
     this.player.arc(0, -radius * 0.1, radius, Math.PI, 0, false);
     this.player.lineTo(radius, radius * 0.7);
     const tentacleCount = 4;
+    const wave = time * 0.01;
     for (let i = tentacleCount; i >= 0; i -= 1) {
       const x = radius - (i * radius * 2) / tentacleCount;
-      const y = radius * 0.9 + (i % 2 === 0 ? radius * 0.12 : -radius * 0.08);
+      const wobble = Math.sin(wave + i * 0.9) * radius * 0.08;
+      const y = radius * 0.88 + wobble;
       this.player.lineTo(x, y);
     }
     this.player.lineTo(-radius, radius * 0.7);
@@ -585,6 +589,7 @@ class GameScene extends Phaser.Scene {
     }
 
     this.updateBoardWiggle(time);
+    this.updateWallGlow(time);
     this.updateDoors(delta);
     this.updatePlayer(delta);
     this.updateGhosts(delta);
@@ -594,10 +599,26 @@ class GameScene extends Phaser.Scene {
   }
 
   updateBoardWiggle(time) {
-    const driftX = Math.sin(time * 0.0014) * 4;
-    const driftY = Math.cos(time * 0.0011) * 3;
+    const driftX = Math.sin(time * 0.0014) * 2;
+    const driftY = Math.cos(time * 0.0011) * 1.5;
     this.board.x = this.offsetX + driftX;
     this.board.y = this.offsetY + driftY;
+  }
+
+  updateWallGlow(time) {
+    if (time - this.lastWallPulse < 120) {
+      return;
+    }
+    this.lastWallPulse = time;
+    const t = (Math.sin(time * 0.0006) + 1) / 2;
+    const color = Phaser.Display.Color.Interpolate.ColorWithColor(
+      new Phaser.Display.Color(55, 246, 255),
+      new Phaser.Display.Color(255, 43, 214),
+      100,
+      Math.floor(t * 100)
+    );
+    this.wallColor = Phaser.Display.Color.GetColor(color.r, color.g, color.b);
+    this.buildWalls();
   }
 
   updateDoors(delta) {
