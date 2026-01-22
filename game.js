@@ -310,7 +310,7 @@ class GameScene extends Phaser.Scene {
     this.offsetY = offsetY;
 
     this.wallGraphics.clear();
-    const stroke = Math.max(2, tileSize * 0.18);
+    const stroke = Math.max(1, tileSize * 0.08);
     const color = this.wallColor ?? 0x37f6ff;
     const alpha = 0.85;
     this.wallGraphics.lineStyle(stroke, color, alpha);
@@ -370,8 +370,9 @@ class GameScene extends Phaser.Scene {
       if (powerSet.has(key)) {
         const powerType = Phaser.Utils.Array.GetRandom(POWER_TYPES);
         const power = this.add.circle(0, 0, this.tileSize * 0.22, powerType.color);
-        power.setStrokeStyle(1, 0xffffff, 0.8);
+        power.setStrokeStyle(2, 0xffffff, 0.9);
         power.baseTileSize = this.tileSize;
+        power.pulseOffset = Phaser.Math.FloatBetween(0, Math.PI * 2);
         power.tile = { ...tile };
         this.positionObject(power, tile.x, tile.y);
         power.powerType = powerType;
@@ -379,9 +380,11 @@ class GameScene extends Phaser.Scene {
         this.board.add(power);
         this.powerMap.set(key, power);
       } else {
-        const pellet = this.add.circle(0, 0, this.tileSize * 0.1, 0xffffff);
-        pellet.setAlpha(0.8);
+        const pellet = this.add.circle(0, 0, this.tileSize * 0.12, 0xffffff);
+        pellet.setAlpha(0.9);
+        pellet.setStrokeStyle(1, 0x37f6ff, 0.8);
         pellet.baseTileSize = this.tileSize;
+        pellet.pulseOffset = Phaser.Math.FloatBetween(0, Math.PI * 2);
         pellet.tile = { ...tile };
         this.positionObject(pellet, tile.x, tile.y);
         this.pelletGroup.add(pellet);
@@ -392,37 +395,36 @@ class GameScene extends Phaser.Scene {
   }
 
   buildPortals() {
-    const floors = [];
     const blocked = new Set([
       `${this.spawnPoints.player.x},${this.spawnPoints.player.y}`,
       ...this.spawnPoints.ghosts.map((spawn) => `${spawn.x},${spawn.y}`),
     ]);
-    for (let y = 1; y < this.grid.length - 1; y += 1) {
-      for (let x = 1; x < this.grid[0].length - 1; x += 1) {
-        if (this.grid[y][x] === 0) {
-          const key = `${x},${y}`;
-          if (!blocked.has(key)) {
-            floors.push({ x, y });
-          }
-        }
+    const cols = this.grid[0].length;
+    const candidates = [];
+    for (let y = 3; y < this.grid.length - 3; y += 1) {
+      if (this.grid[y][1] === 0 && this.grid[y][2] === 0 && !blocked.has(`1,${y}`)) {
+        candidates.push(y);
       }
     }
+    const portalY = candidates.length
+      ? Phaser.Utils.Array.GetRandom(candidates)
+      : Phaser.Math.Between(3, this.grid.length - 4);
 
-    const portalTiles = Phaser.Utils.Array.Shuffle(floors).slice(0, 2);
-    this.portals = portalTiles.map((tile, index) => ({
-      ...tile,
-      id: index,
-      pair: index === 0 ? 1 : 0,
-    }));
+    this.portals = [
+      { x: 1, y: portalY, id: 0, pair: 1, side: "left" },
+      { x: cols - 2, y: portalY, id: 1, pair: 0, side: "right" },
+    ];
 
     this.portalGraphics.clear();
     this.portalGraphics.lineStyle(2, 0xff2bd6, 0.8);
-    this.portalGraphics.fillStyle(0x25102c, 1);
+    this.portalGraphics.fillStyle(0xff2bd6, 0.6);
     this.portals.forEach((portal) => {
-      const px = portal.x * this.tileSize + this.tileSize * 0.15;
-      const py = portal.y * this.tileSize + this.tileSize * 0.15;
-      this.portalGraphics.strokeRoundedRect(px, py, this.tileSize * 0.7, this.tileSize * 0.7, 6);
-      this.portalGraphics.fillRoundedRect(px, py, this.tileSize * 0.7, this.tileSize * 0.7, 6);
+      const edgeX = portal.side === "left" ? 0 : this.grid[0].length * this.tileSize;
+      const px = edgeX;
+      const py = portal.y * this.tileSize + this.tileSize * 0.2;
+      const width = this.tileSize * 0.12;
+      const height = this.tileSize * 0.6;
+      this.portalGraphics.fillRect(px - width / 2, py, width, height);
     });
   }
 
@@ -611,7 +613,6 @@ class GameScene extends Phaser.Scene {
     const size = this.tileSize * (this.playerData.superActive ? 1.2 : 0.9);
     const radius = size * 0.5;
     const angle = this.getDirectionAngle(this.playerData.dir);
-    const mouth = 0.35 + 0.15 * Math.sin(time * 0.008);
     const bodyColor = 0xffe85b;
     const bgColor = 0x0a0a12;
 
@@ -631,13 +632,10 @@ class GameScene extends Phaser.Scene {
     this.player.lineTo(-radius, radius * 0.7);
     this.player.closePath();
     this.player.fillPath();
-
-    this.player.fillStyle(bgColor, 1);
-    this.player.beginPath();
-    this.player.moveTo(0, 0);
-    this.player.arc(0, 0, radius * 0.65, angle + mouth, angle - mouth, false);
-    this.player.closePath();
-    this.player.fillPath();
+    const eyeOffset = radius * 0.22;
+    this.player.fillStyle(bgColor, 0.9);
+    this.player.fillCircle(-eyeOffset, -radius * 0.05, radius * 0.12);
+    this.player.fillCircle(eyeOffset, -radius * 0.05, radius * 0.12);
   }
 
   drawEnemies(time) {
@@ -660,16 +658,29 @@ class GameScene extends Phaser.Scene {
     this.updateDoors(delta);
     this.updatePlayer(delta);
     this.updateGhosts(delta);
+    this.updatePelletGlow(time);
     this.drawSquidPlayer(time);
     this.drawEnemies(time);
     this.checkCollisions();
   }
 
   updateBoardWiggle(time) {
-    const driftX = Math.sin(time * 0.0014) * 2;
-    const driftY = Math.cos(time * 0.0011) * 1.5;
+    const driftX = Math.sin(time * 0.0014) * 1.2;
+    const driftY = Math.cos(time * 0.0011) * 0.9;
     this.board.x = this.offsetX + driftX;
     this.board.y = this.offsetY + driftY;
+  }
+
+  updatePelletGlow(time) {
+    const basePulse = Math.sin(time * 0.006);
+    this.pelletGroup.getChildren().forEach((pellet) => {
+      const pulse = 1 + 0.12 * Math.sin(time * 0.01 + pellet.pulseOffset) + 0.04 * basePulse;
+      pellet.setScale(pellet.baseScale * pulse);
+    });
+    this.powerGroup.getChildren().forEach((power) => {
+      const pulse = 1 + 0.22 * Math.sin(time * 0.012 + power.pulseOffset);
+      power.setScale(power.baseScale * pulse);
+    });
   }
 
   updateWallGlow(time) {
@@ -769,7 +780,42 @@ class GameScene extends Phaser.Scene {
 
       if (sprite === this.player) {
         this.collectPellet(data.tileX, data.tileY);
+      } else {
+        this.trackGhostHistory(data);
       }
+    }
+  }
+
+  trackGhostHistory(data) {
+    if (!data.pathHistory) {
+      data.pathHistory = [];
+      data.loopCount = 0;
+      data.loopThreshold = Phaser.Math.Between(2, 5);
+    }
+    data.pathHistory.push(`${data.tileX},${data.tileY}`);
+    if (data.pathHistory.length > 6) {
+      data.pathHistory.shift();
+    }
+
+    const playerStill = !this.playerData.moving && this.playerData.dir.x === 0 && this.playerData.dir.y === 0;
+    if (!playerStill) {
+      data.loopCount = 0;
+      data.forceRandom = false;
+      return;
+    }
+
+    const recent = data.pathHistory.slice(-5);
+    const unique = new Set(recent);
+    if (unique.size <= 2 && recent.length >= 4) {
+      data.loopCount += 1;
+    } else {
+      data.loopCount = 0;
+    }
+
+    if (data.loopCount >= data.loopThreshold) {
+      data.forceRandom = true;
+      data.loopCount = 0;
+      data.loopThreshold = Phaser.Math.Between(2, 5);
     }
   }
 
@@ -801,6 +847,11 @@ class GameScene extends Phaser.Scene {
     const reverse = { x: -data.dir.x, y: -data.dir.y };
     const filtered = options.filter((dir) => !(dir.x === reverse.x && dir.y === reverse.y));
     const choices = filtered.length ? filtered : options;
+
+    if (data.forceRandom) {
+      data.forceRandom = false;
+      return Phaser.Utils.Array.GetRandom(choices);
+    }
 
     if (data.mode === "fruit") {
       return Phaser.Utils.Array.GetRandom(choices);
@@ -1072,13 +1123,14 @@ class GameScene extends Phaser.Scene {
   }
 
   layoutBoard() {
-    const maxWidth = this.scale.width * 0.75;
-    const maxHeight = (this.scale.height - 90) * 0.75;
+    const padding = Math.max(8, Math.floor(Math.min(this.scale.width, this.scale.height) * 0.03));
+    const maxWidth = this.scale.width - padding * 2;
+    const maxHeight = this.scale.height - padding * 2;
     const tileSize = Math.floor(Math.min(maxWidth / this.grid[0].length, maxHeight / this.grid.length));
     const boardWidth = tileSize * this.grid[0].length;
     const boardHeight = tileSize * this.grid.length;
     const offsetX = (this.scale.width - boardWidth) / 2;
-    const offsetY = (this.scale.height - boardHeight) / 2 + 40;
+    const offsetY = (this.scale.height - boardHeight) / 2;
     return { tileSize, offsetX, offsetY };
   }
 
@@ -1101,21 +1153,25 @@ class GameScene extends Phaser.Scene {
     this.buildWalls();
     this.portalGraphics.clear();
     this.portalGraphics.lineStyle(2, 0xff2bd6, 0.8);
-    this.portalGraphics.fillStyle(0x25102c, 1);
+    this.portalGraphics.fillStyle(0xff2bd6, 0.6);
     this.portals.forEach((portal) => {
-      const px = portal.x * this.tileSize + this.tileSize * 0.15;
-      const py = portal.y * this.tileSize + this.tileSize * 0.15;
-      this.portalGraphics.strokeRoundedRect(px, py, this.tileSize * 0.7, this.tileSize * 0.7, 6);
-      this.portalGraphics.fillRoundedRect(px, py, this.tileSize * 0.7, this.tileSize * 0.7, 6);
+      const edgeX = portal.side === "left" ? 0 : this.grid[0].length * this.tileSize;
+      const px = edgeX;
+      const py = portal.y * this.tileSize + this.tileSize * 0.2;
+      const width = this.tileSize * 0.12;
+      const height = this.tileSize * 0.6;
+      this.portalGraphics.fillRect(px - width / 2, py, width, height);
     });
     this.pelletGroup.getChildren().forEach((pellet) => {
       this.positionObject(pellet, pellet.tile.x, pellet.tile.y);
       const scale = this.tileSize / pellet.baseTileSize;
+      pellet.baseScale = scale;
       pellet.setScale(scale);
     });
     this.powerGroup.getChildren().forEach((power) => {
       this.positionObject(power, power.tile.x, power.tile.y);
       const scale = this.tileSize / power.baseTileSize;
+      power.baseScale = scale;
       power.setScale(scale);
     });
     this.doors.forEach((door) => {
