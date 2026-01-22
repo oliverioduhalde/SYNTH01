@@ -497,7 +497,7 @@ class GameScene extends Phaser.Scene {
       dir: { x: 0, y: 0 },
       nextDir: { x: 0, y: 0 },
       moving: false,
-      speed: 90 + this.levelIndex * 8,
+      speed: 5 + this.levelIndex * 0.25,
       canPassWalls: false,
       superActive: false,
       lastPortal: 0,
@@ -512,7 +512,7 @@ class GameScene extends Phaser.Scene {
       ghost.ghostData.moving = false;
       ghost.ghostData.mode = "normal";
       ghost.ghostData.renderColor = ghost.ghostData.color;
-      ghost.ghostData.speed = 70 + this.levelIndex * 6;
+      ghost.ghostData.speed = 4.4 + this.levelIndex * 0.2;
       ghost.ghostData.lastPortal = 0;
       this.positionObject(ghost, spawn.x, spawn.y);
     });
@@ -713,7 +713,7 @@ class GameScene extends Phaser.Scene {
 
   updatePlayer(delta) {
     const player = this.playerData;
-    const speed = player.speed * (this.activeEffects.has("speed") ? 1.4 : 1);
+    const speed = player.speed * this.tileSize * (this.activeEffects.has("speed") ? 1.4 : 1);
     const canPass = player.canPassWalls;
 
     if (!player.moving) {
@@ -739,7 +739,7 @@ class GameScene extends Phaser.Scene {
     this.ghostGroup.getChildren().forEach((ghost) => {
       const data = ghost.ghostData;
       const speedMultiplier = this.activeEffects.has("slow") ? 0.6 : 1;
-      const speed = data.speed * speedMultiplier;
+      const speed = data.speed * this.tileSize * speedMultiplier;
 
       if (!data.moving) {
         const target = this.getGhostTarget(ghost);
