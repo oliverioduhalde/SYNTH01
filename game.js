@@ -34,10 +34,13 @@ class GameScene extends Phaser.Scene {
     this.lives = 3;
     this.extraLifeAt = 10000;
     this.isPlaying = false;
+    this.baseSeed = null;
+    this.rng = null;
   }
 
   create() {
     this.scale.on("resize", this.handleResize, this);
+    this.initSeed();
 
     this.board = this.add.container(0, 0);
     this.wallGraphics = this.add.graphics();
@@ -80,6 +83,50 @@ class GameScene extends Phaser.Scene {
     });
 
     this.handleResize({ width: this.scale.width, height: this.scale.height });
+  }
+
+  initSeed() {
+    const params = new URLSearchParams(window.location.search);
+    const seedParam = params.get("seed");
+    const parsed = seedParam !== null ? parseInt(seedParam, 10) : null;
+    this.baseSeed = Number.isFinite(parsed) ? parsed : Date.now();
+  }
+
+  setLevelSeed(attempt = 0) {
+    const seed = this.baseSeed + this.levelIndex * 1000 + attempt;
+    this.rng = this.mulberry32(seed);
+  }
+
+  mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a |= 0;
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  random() {
+    return this.rng ? this.rng() : Math.random();
+  }
+
+  randInt(min, max) {
+    return Math.floor(this.random() * (max - min + 1)) + min;
+  }
+
+  randPick(list) {
+    return list[this.randInt(0, list.length - 1)];
+  }
+
+  shuffle(list) {
+    const array = list.slice();
+    for (let i = array.length - 1; i > 0; i -= 1) {
+      const j = this.randInt(0, i);
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
   }
 
   startGame() {
@@ -135,7 +182,28 @@ class GameScene extends Phaser.Scene {
 
   buildLevel() {
     const size = this.getGridSize();
-    this.grid = this.generateMaze(size.cols, size.rows);
+    let grid = null;
+    let warpRows = [];
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      this.setLevelSeed(attempt);
+      const result = this.generateMaze(size.cols, size.rows);
+      grid = result.grid;
+      warpRows = result.warpRows;
+      if (this.validateMaze(grid, warpRows)) {
+        break;
+      }
+      grid = null;
+    }
+
+    if (!grid) {
+      this.setLevelSeed(0);
+      const fallback = this.generateMaze(size.cols, size.rows);
+      grid = fallback.grid;
+      warpRows = fallback.warpRows;
+    }
+
+    this.grid = grid;
+    this.warpRows = warpRows;
     this.spawnPoints = this.pickSpawnPoints();
     this.buildWalls();
     this.buildDoors();
@@ -149,12 +217,14 @@ class GameScene extends Phaser.Scene {
   }
 
   generateMaze(cols, rows) {
+    // Build left half, then mirror for perfect vertical symmetry.
     const halfCols = Math.floor(cols / 2);
     const left = this.generateHalfMaze(halfCols, rows);
     this.braidDeadEnds(left, 2);
-    this.addExtraLoops(left, rows);
+    this.addExtraLoops(left, 6);
     this.thinDoubleCorridors(left, 2);
-    this.openCenterLinks(left, 3);
+    this.carveOpenRooms(left);
+    this.openCenterLinks(left, this.randInt(2, 4));
 
     const grid = Array.from({ length: rows }, () => Array(cols).fill(1));
     for (let y = 0; y < rows; y += 1) {
@@ -173,7 +243,12 @@ class GameScene extends Phaser.Scene {
       grid[y][cols - 1] = 1;
     }
 
-    return grid;
+    // Reserve a centered ghost house (Pac-Man style).
+    this.ghostHouse = this.carveGhostHouse(grid);
+    // Add 1–3 warp tunnels that connect left/right borders.
+    const warpRows = this.createWarpTunnels(grid, this.randInt(1, 3));
+
+    return { grid, warpRows };
   }
 
   generateHalfMaze(cols, rows) {
@@ -192,7 +267,7 @@ class GameScene extends Phaser.Scene {
 
     while (stack.length) {
       const current = stack[stack.length - 1];
-      const shuffled = Phaser.Utils.Array.Shuffle(directions.slice());
+      const shuffled = this.shuffle(directions);
       let carved = false;
 
       for (const dir of shuffled) {
@@ -216,6 +291,7 @@ class GameScene extends Phaser.Scene {
   }
 
   braidDeadEnds(grid, passes) {
+    // Remove single-cell dead ends to keep flowy corridors.
     for (let pass = 0; pass < passes; pass += 1) {
       const deadEnds = [];
       for (let y = 1; y < grid.length - 1; y += 1) {
@@ -226,7 +302,7 @@ class GameScene extends Phaser.Scene {
         }
       }
 
-      Phaser.Utils.Array.Shuffle(deadEnds).forEach((cell) => {
+      this.shuffle(deadEnds).forEach((cell) => {
         const options = [
           { x: 1, y: 0 },
           { x: -1, y: 0 },
@@ -234,7 +310,7 @@ class GameScene extends Phaser.Scene {
           { x: 0, y: -1 },
         ].filter((dir) => grid[cell.y + dir.y][cell.x + dir.x] === 1);
         if (options.length) {
-          const pick = Phaser.Utils.Array.GetRandom(options);
+          const pick = this.randPick(options);
           grid[cell.y + pick.y][cell.x + pick.x] = 0;
         }
       });
@@ -242,6 +318,7 @@ class GameScene extends Phaser.Scene {
   }
 
   thinDoubleCorridors(grid, passes) {
+    // Reduce accidental 2-wide corridors (except intentional rooms).
     for (let pass = 0; pass < passes; pass += 1) {
       for (let y = 1; y < grid.length - 1; y += 1) {
         for (let x = 1; x < grid[0].length - 2; x += 1) {
@@ -267,12 +344,13 @@ class GameScene extends Phaser.Scene {
   }
 
   addExtraLoops(grid, attempts) {
+    // Add a few loops to avoid tree-like mazes.
     let added = 0;
     let tries = 0;
     while (added < attempts && tries < attempts * 4) {
       tries += 1;
-      const wx = Phaser.Math.Between(1, grid[0].length - 2);
-      const wy = Phaser.Math.Between(1, grid.length - 2);
+      const wx = this.randInt(1, grid[0].length - 2);
+      const wy = this.randInt(1, grid.length - 2);
       if (grid[wy][wx] === 1) {
         const neighbors = this.countFloorNeighbors(grid, wx, wy);
         if (neighbors >= 2) {
@@ -284,6 +362,7 @@ class GameScene extends Phaser.Scene {
   }
 
   openCenterLinks(grid, count) {
+    // Ensure several connections across the symmetry seam.
     const x = grid[0].length - 1;
     const candidates = [];
     for (let y = 2; y < grid.length - 2; y += 1) {
@@ -291,10 +370,233 @@ class GameScene extends Phaser.Scene {
         candidates.push(y);
       }
     }
-    Phaser.Utils.Array.Shuffle(candidates);
-    candidates.slice(0, count).forEach((y) => {
-      grid[y][x] = 0;
+    this.shuffle(candidates)
+      .slice(0, count)
+      .forEach((y) => {
+        grid[y][x] = 0;
+      });
+  }
+
+  carveOpenRooms(grid) {
+    // Add sparse rectangular open spaces without internal walls.
+    const sizes = [
+      { w: 1, h: 1, weight: 95 },
+      { w: 1, h: 2, weight: 1 },
+      { w: 2, h: 1, weight: 1 },
+      { w: 2, h: 2, weight: 0.5 },
+      { w: 3, h: 2, weight: 0.3 },
+      { w: 2, h: 3, weight: 0.3 },
+      { w: 4, h: 4, weight: 0.1 },
+    ];
+    const totalWeight = sizes.reduce((sum, item) => sum + item.weight, 0);
+    const attempts = Math.floor((grid.length * grid[0].length) / 40);
+
+    for (let i = 0; i < attempts; i += 1) {
+      const roll = this.random() * totalWeight;
+      let pick = sizes[0];
+      let accum = 0;
+      for (const size of sizes) {
+        accum += size.weight;
+        if (roll <= accum) {
+          pick = size;
+          break;
+        }
+      }
+
+      const maxX = grid[0].length - pick.w - 1;
+      const maxY = grid.length - pick.h - 1;
+      const x = this.randInt(1, Math.max(1, maxX));
+      const y = this.randInt(1, Math.max(1, maxY));
+
+      if (!this.isRoomPlaceable(grid, x, y, pick.w, pick.h)) {
+        continue;
+      }
+      this.carveRoom(grid, x, y, pick.w, pick.h);
+    }
+  }
+
+  isRoomPlaceable(grid, x, y, w, h) {
+    for (let yy = y; yy < y + h; yy += 1) {
+      for (let xx = x; xx < x + w; xx += 1) {
+        if (grid[yy][xx] === 0) {
+          return false;
+        }
+      }
+    }
+    return this.roomHasOpenNeighbor(grid, x, y, w, h);
+  }
+
+  roomHasOpenNeighbor(grid, x, y, w, h) {
+    for (let yy = y - 1; yy <= y + h; yy += 1) {
+      for (let xx = x - 1; xx <= x + w; xx += 1) {
+        if (!grid[yy] || typeof grid[yy][xx] === "undefined") {
+          continue;
+        }
+        if (yy >= y && yy < y + h && xx >= x && xx < x + w) {
+          continue;
+        }
+        if (grid[yy][xx] === 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  carveRoom(grid, x, y, w, h) {
+    for (let yy = y; yy < y + h; yy += 1) {
+      for (let xx = x; xx < x + w; xx += 1) {
+        grid[yy][xx] = 0;
+      }
+    }
+  }
+
+  carveGhostHouse(grid) {
+    // Carve a central ghost house with a single door.
+    const cols = grid[0].length;
+    const rows = grid.length;
+    const width = 6;
+    const height = 5;
+    const left = Math.floor(cols / 2) - Math.floor(width / 2);
+    const top = Math.floor(rows / 2) - Math.floor(height / 2);
+    const right = left + width - 1;
+    const bottom = top + height - 1;
+
+    for (let y = top; y <= bottom; y += 1) {
+      for (let x = left; x <= right; x += 1) {
+        grid[y][x] = 1;
+      }
+    }
+    for (let y = top + 1; y <= bottom - 1; y += 1) {
+      for (let x = left + 1; x <= right - 1; x += 1) {
+        grid[y][x] = 0;
+      }
+    }
+
+    const doorX = Math.floor((left + right) / 2);
+    grid[top][doorX] = 0;
+    if (grid[top - 1] && typeof grid[top - 1][doorX] !== "undefined") {
+      grid[top - 1][doorX] = 0;
+    }
+
+    const cells = [];
+    for (let y = top + 1; y <= bottom - 1; y += 1) {
+      for (let x = left + 1; x <= right - 1; x += 1) {
+        cells.push({ x, y });
+      }
+    }
+    return { left, right, top, bottom, cells };
+  }
+
+  createWarpTunnels(grid, count) {
+    // Create 1–3 aligned warp tunnels on the borders.
+    const rows = grid.length;
+    const cols = grid[0].length;
+    const candidates = [];
+    for (let y = 2; y < rows - 2; y += 1) {
+      if (grid[y][1] === 0 && grid[y][cols - 2] === 0) {
+        candidates.push(y);
+      }
+    }
+    const shuffled = this.shuffle(candidates);
+    const warpRows = shuffled.slice(0, Math.min(count, shuffled.length));
+    if (warpRows.length === 0) {
+      warpRows.push(Math.floor(rows / 2));
+    }
+
+    warpRows.forEach((y) => {
+      grid[y][0] = 0;
+      grid[y][cols - 1] = 0;
     });
+    return warpRows;
+  }
+
+  validateMaze(grid, warpRows) {
+    // Validate symmetry, connectivity, and warp count.
+    if (!this.validateSymmetry(grid)) {
+      return false;
+    }
+    if (!this.validateConnectivity(grid)) {
+      return false;
+    }
+    if (!this.validateWarpRows(grid, warpRows)) {
+      return false;
+    }
+    return true;
+  }
+
+  validateSymmetry(grid) {
+    const rows = grid.length;
+    const cols = grid[0].length;
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < cols; x += 1) {
+        if (grid[y][x] !== grid[y][cols - 1 - x]) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  validateConnectivity(grid) {
+    const rows = grid.length;
+    const cols = grid[0].length;
+    let start = null;
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < cols; x += 1) {
+        if (grid[y][x] === 0) {
+          start = { x, y };
+          break;
+        }
+      }
+      if (start) {
+        break;
+      }
+    }
+    if (!start) {
+      return false;
+    }
+
+    const visited = Array.from({ length: rows }, () => Array(cols).fill(false));
+    const queue = [start];
+    visited[start.y][start.x] = true;
+    while (queue.length) {
+      const current = queue.shift();
+      const neighbors = [
+        { x: current.x + 1, y: current.y },
+        { x: current.x - 1, y: current.y },
+        { x: current.x, y: current.y + 1 },
+        { x: current.x, y: current.y - 1 },
+      ];
+      neighbors.forEach((pos) => {
+        if (!grid[pos.y] || typeof grid[pos.y][pos.x] === "undefined") {
+          return;
+        }
+        if (grid[pos.y][pos.x] === 0 && !visited[pos.y][pos.x]) {
+          visited[pos.y][pos.x] = true;
+          queue.push(pos);
+        }
+      });
+    }
+
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < cols; x += 1) {
+        if (grid[y][x] === 0 && !visited[y][x]) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  validateWarpRows(grid, warpRows) {
+    const cols = grid[0].length;
+    const validRows = warpRows.filter((y) => grid[y][0] === 0 && grid[y][cols - 1] === 0);
+    return validRows.length >= 1 && validRows.length <= 3;
+  }
+
+  mazeToAscii(grid) {
+    return grid.map((row) => row.map((cell) => (cell === 1 ? "#" : ".")).join("")).join("\n");
   }
 
   countFloorNeighbors(grid, x, y) {
@@ -316,17 +618,34 @@ class GameScene extends Phaser.Scene {
 
   pickSpawnPoints() {
     const floors = [];
+    const ghostCells = this.ghostHouse?.cells ? this.ghostHouse.cells.slice() : [];
     for (let y = 1; y < this.grid.length - 1; y += 1) {
       for (let x = 1; x < this.grid[0].length - 1; x += 1) {
         if (this.grid[y][x] === 0) {
-          floors.push({ x, y });
+          if (!this.isInsideGhostHouse(x, y)) {
+            floors.push({ x, y });
+          }
         }
       }
     }
 
-    const player = floors.shift();
-    const ghosts = Phaser.Utils.Array.Shuffle(floors).slice(0, 4);
+    const shuffledFloors = this.shuffle(floors);
+    const player = shuffledFloors[0] || { x: 1, y: 1 };
+    const remainingFloors = shuffledFloors.filter((tile) => tile.x !== player.x || tile.y !== player.y);
+    let ghosts = [];
+    if (ghostCells.length >= 4) {
+      ghosts = this.shuffle(ghostCells).slice(0, 4);
+    } else {
+      ghosts = this.shuffle(remainingFloors).slice(0, 4);
+    }
     return { player, ghosts };
+  }
+
+  isInsideGhostHouse(x, y) {
+    if (!this.ghostHouse) {
+      return false;
+    }
+    return x > this.ghostHouse.left && x < this.ghostHouse.right && y > this.ghostHouse.top && y < this.ghostHouse.bottom;
   }
 
   buildWalls() {
@@ -339,7 +658,7 @@ class GameScene extends Phaser.Scene {
     const stroke = 3;
     const color = this.wallColor ?? 0x37f6ff;
     const alpha = 0.85;
-    this.wallGraphics.lineStyle(stroke, color, alpha, "round", "round");
+    this.wallGraphics.lineStyle(stroke, color, alpha);
     this.wallGraphics.fillStyle(color, alpha);
 
     const rows = this.grid.length;
@@ -371,20 +690,20 @@ class GameScene extends Phaser.Scene {
   }
 
   buildPellets() {
-    const powerCount = Phaser.Math.Between(3, 10);
+    const powerCount = this.randInt(3, 10);
     const floorTiles = [];
     const portalSet = new Set(this.portals.map((portal) => `${portal.x},${portal.y}`));
     for (let y = 1; y < this.grid.length - 1; y += 1) {
       for (let x = 1; x < this.grid[0].length - 1; x += 1) {
         if (this.grid[y][x] === 0) {
-          if (!portalSet.has(`${x},${y}`)) {
+          if (!portalSet.has(`${x},${y}`) && !this.isInsideGhostHouse(x, y)) {
             floorTiles.push({ x, y });
           }
         }
       }
     }
 
-    const shuffled = Phaser.Utils.Array.Shuffle(floorTiles);
+    const shuffled = this.shuffle(floorTiles);
     const powerTiles = shuffled.slice(0, powerCount);
     const powerSet = new Set(powerTiles.map((tile) => `${tile.x},${tile.y}`));
 
@@ -394,7 +713,7 @@ class GameScene extends Phaser.Scene {
         return;
       }
       if (powerSet.has(key)) {
-        const powerType = Phaser.Utils.Array.GetRandom(POWER_TYPES);
+        const powerType = this.randPick(POWER_TYPES);
         const power = this.add.circle(0, 0, this.tileSize * 0.22, powerType.color);
         power.setStrokeStyle(2, 0xffffff, 0.9);
         power.baseTileSize = this.tileSize;
@@ -423,25 +742,15 @@ class GameScene extends Phaser.Scene {
   }
 
   buildPortals() {
-    const blocked = new Set([
-      `${this.spawnPoints.player.x},${this.spawnPoints.player.y}`,
-      ...this.spawnPoints.ghosts.map((spawn) => `${spawn.x},${spawn.y}`),
-    ]);
     const cols = this.grid[0].length;
-    const candidates = [];
-    for (let y = 3; y < this.grid.length - 3; y += 1) {
-      if (this.grid[y][1] === 0 && this.grid[y][2] === 0 && !blocked.has(`1,${y}`)) {
-        candidates.push(y);
-      }
-    }
-    const portalY = candidates.length
-      ? Phaser.Utils.Array.GetRandom(candidates)
-      : Phaser.Math.Between(3, this.grid.length - 4);
-
-    this.portals = [
-      { x: 1, y: portalY, id: 0, pair: 1, side: "left" },
-      { x: cols - 2, y: portalY, id: 1, pair: 0, side: "right" },
-    ];
+    this.portals = [];
+    let id = 0;
+    (this.warpRows || []).forEach((row) => {
+      const left = { x: 0, y: row, id, pair: id + 1, side: "left" };
+      const right = { x: cols - 1, y: row, id: id + 1, pair: id, side: "right" };
+      this.portals.push(left, right);
+      id += 2;
+    });
 
     this.portalGraphics.clear();
     this.portalGraphics.lineStyle(2, 0xff2bd6, 0.8);
