@@ -70,6 +70,7 @@ class GameScene extends Phaser.Scene {
 
     this.setupInput();
     this.showOverlay("AI PACKMAN", "Press P or tap START.");
+    this.hudHeight = document.querySelector(".hud")?.offsetHeight ?? 80;
 
     UI.overlayBtn.addEventListener("click", () => this.startGame());
     document.addEventListener("keydown", (event) => {
@@ -222,8 +223,9 @@ class GameScene extends Phaser.Scene {
     const left = this.generateHalfMaze(halfCols, rows);
     this.braidDeadEnds(left, 2);
     this.addExtraLoops(left, 6);
-    this.thinDoubleCorridors(left, 2);
-    this.carveOpenRooms(left);
+    const roomCells = this.carveOpenRooms(left);
+    this.thinDoubleCorridors(left, 3, roomCells);
+    this.enforceSingleWidth(left, roomCells);
     this.openCenterLinks(left, this.randInt(2, 4));
 
     const grid = Array.from({ length: rows }, () => Array(cols).fill(1));
@@ -254,7 +256,7 @@ class GameScene extends Phaser.Scene {
   generateHalfMaze(cols, rows) {
     const grid = Array.from({ length: rows }, () => Array(cols).fill(1));
     const stack = [];
-    const start = { x: 1, y: 1 };
+    const start = { x: 1, y: 1, dir: null };
     grid[start.y][start.x] = 0;
     stack.push(start);
 
@@ -267,7 +269,11 @@ class GameScene extends Phaser.Scene {
 
     while (stack.length) {
       const current = stack[stack.length - 1];
-      const shuffled = this.shuffle(directions);
+      let shuffled = this.shuffle(directions);
+      if (current.dir && this.random() < 0.7) {
+        const rest = shuffled.filter((dir) => dir.x !== current.dir.x || dir.y !== current.dir.y);
+        shuffled = [current.dir, ...rest];
+      }
       let carved = false;
 
       for (const dir of shuffled) {
@@ -276,7 +282,7 @@ class GameScene extends Phaser.Scene {
         if (ny > 0 && ny < rows - 1 && nx > 0 && nx < cols - 1 && grid[ny][nx] === 1) {
           grid[ny][nx] = 0;
           grid[current.y + dir.y / 2][current.x + dir.x / 2] = 0;
-          stack.push({ x: nx, y: ny });
+          stack.push({ x: nx, y: ny, dir });
           carved = true;
           break;
         }
@@ -317,14 +323,14 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  thinDoubleCorridors(grid, passes) {
+  thinDoubleCorridors(grid, passes, roomCells = new Set()) {
     // Reduce accidental 2-wide corridors (except intentional rooms).
     for (let pass = 0; pass < passes; pass += 1) {
       for (let y = 1; y < grid.length - 1; y += 1) {
         for (let x = 1; x < grid[0].length - 2; x += 1) {
           if (grid[y][x] === 0 && grid[y][x + 1] === 0) {
             const candidate = { x: x + 1, y };
-            if (this.countFloorNeighbors(grid, candidate.x, candidate.y) >= 3) {
+            if (!roomCells.has(`${candidate.x},${candidate.y}`) && this.countFloorNeighbors(grid, candidate.x, candidate.y) >= 3) {
               grid[candidate.y][candidate.x] = 1;
             }
           }
@@ -334,13 +340,59 @@ class GameScene extends Phaser.Scene {
         for (let x = 1; x < grid[0].length - 1; x += 1) {
           if (grid[y][x] === 0 && grid[y + 1][x] === 0) {
             const candidate = { x, y: y + 1 };
-            if (this.countFloorNeighbors(grid, candidate.x, candidate.y) >= 3) {
+            if (!roomCells.has(`${candidate.x},${candidate.y}`) && this.countFloorNeighbors(grid, candidate.x, candidate.y) >= 3) {
               grid[candidate.y][candidate.x] = 1;
             }
           }
         }
       }
     }
+  }
+
+  enforceSingleWidth(grid, roomCells) {
+    // Aggressively close double-wide corridors while keeping connectivity.
+    const maxAttempts = 200;
+    let attempts = 0;
+    for (let y = 1; y < grid.length - 1; y += 1) {
+      for (let x = 1; x < grid[0].length - 1; x += 1) {
+        if (attempts >= maxAttempts) {
+          return;
+        }
+        if (grid[y][x] !== 0 || roomCells.has(`${x},${y}`)) {
+          continue;
+        }
+        if (grid[y][x + 1] === 0 && !roomCells.has(`${x + 1},${y}`)) {
+          const keep = this.chooseCellToClose(grid, { x, y }, { x: x + 1, y });
+          if (this.canCloseCell(grid, keep.x, keep.y, roomCells)) {
+            grid[keep.y][keep.x] = 1;
+            attempts += 1;
+          }
+        }
+        if (grid[y + 1] && grid[y + 1][x] === 0 && !roomCells.has(`${x},${y + 1}`)) {
+          const keep = this.chooseCellToClose(grid, { x, y }, { x, y: y + 1 });
+          if (this.canCloseCell(grid, keep.x, keep.y, roomCells)) {
+            grid[keep.y][keep.x] = 1;
+            attempts += 1;
+          }
+        }
+      }
+    }
+  }
+
+  chooseCellToClose(grid, a, b) {
+    const neighborsA = this.countFloorNeighbors(grid, a.x, a.y);
+    const neighborsB = this.countFloorNeighbors(grid, b.x, b.y);
+    return neighborsA >= neighborsB ? a : b;
+  }
+
+  canCloseCell(grid, x, y, roomCells) {
+    if (roomCells.has(`${x},${y}`)) {
+      return false;
+    }
+    grid[y][x] = 1;
+    const ok = this.validateConnectivity(grid);
+    grid[y][x] = 0;
+    return ok;
   }
 
   addExtraLoops(grid, attempts) {
@@ -390,6 +442,7 @@ class GameScene extends Phaser.Scene {
     ];
     const totalWeight = sizes.reduce((sum, item) => sum + item.weight, 0);
     const attempts = Math.floor((grid.length * grid[0].length) / 40);
+    const roomCells = new Set();
 
     for (let i = 0; i < attempts; i += 1) {
       const roll = this.random() * totalWeight;
@@ -411,8 +464,9 @@ class GameScene extends Phaser.Scene {
       if (!this.isRoomPlaceable(grid, x, y, pick.w, pick.h)) {
         continue;
       }
-      this.carveRoom(grid, x, y, pick.w, pick.h);
+      this.carveRoom(grid, x, y, pick.w, pick.h, roomCells);
     }
+    return roomCells;
   }
 
   isRoomPlaceable(grid, x, y, w, h) {
@@ -443,10 +497,13 @@ class GameScene extends Phaser.Scene {
     return false;
   }
 
-  carveRoom(grid, x, y, w, h) {
+  carveRoom(grid, x, y, w, h, roomCells) {
     for (let yy = y; yy < y + h; yy += 1) {
       for (let xx = x; xx < x + w; xx += 1) {
         grid[yy][xx] = 0;
+        if (roomCells) {
+          roomCells.add(`${xx},${yy}`);
+        }
       }
     }
   }
@@ -1107,8 +1164,8 @@ class GameScene extends Phaser.Scene {
   }
 
   updateBoardWiggle(time) {
-    const driftX = Math.sin(time * 0.0014) * 1.2;
-    const driftY = Math.cos(time * 0.0011) * 0.9;
+    const driftX = Math.sin(time * 0.0014) * 0.6;
+    const driftY = Math.cos(time * 0.0011) * 0.5;
     this.board.x = this.offsetX + driftX;
     this.board.y = this.offsetY + driftY;
   }
@@ -1610,14 +1667,15 @@ class GameScene extends Phaser.Scene {
 
   layoutBoard() {
     const padding = Math.max(8, Math.floor(Math.min(this.scale.width, this.scale.height) * 0.03));
-    const hudOffset = 90;
+    const hudOffset = this.hudHeight || 80;
+    const controlsOffset = this.scale.width < 720 ? 90 : 0;
     const maxWidth = this.scale.width - padding * 2;
-    const maxHeight = this.scale.height - padding * 2 - hudOffset;
+    const maxHeight = this.scale.height - padding * 2 - hudOffset - controlsOffset;
     const tileSize = Math.floor(Math.min(maxWidth / this.grid[0].length, maxHeight / this.grid.length));
     const boardWidth = tileSize * this.grid[0].length;
     const boardHeight = tileSize * this.grid.length;
     const offsetX = (this.scale.width - boardWidth) / 2;
-    const offsetY = (this.scale.height - boardHeight) / 2 + hudOffset * 0.5;
+    const offsetY = hudOffset + padding + (maxHeight - boardHeight) / 2;
     return { tileSize, offsetX, offsetY };
   }
 
