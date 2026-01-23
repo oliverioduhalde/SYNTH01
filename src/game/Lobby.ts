@@ -28,6 +28,9 @@ export class Lobby {
   }
 
   forceStart(): void {
+    if (this.slots.length === 0) {
+      this.slots = this.createDefaultSlots();
+    }
     this.fillAI();
     this.startMatch();
   }
@@ -52,5 +55,15 @@ export class Lobby {
         slot.isAI = true;
       }
     });
+  }
+
+  private createDefaultSlots(): SlotState[] {
+    return [
+      { id: "theseus", role: "theseus", isAI: false, connected: true },
+      { id: "hunter-ai", role: "hunter", isAI: true, connected: false },
+      { id: "warden-ai", role: "warden", isAI: true, connected: false },
+      { id: "tracker-ai", role: "tracker", isAI: true, connected: false },
+      { id: "brute-ai", role: "brute", isAI: true, connected: false },
+    ];
   }
 }

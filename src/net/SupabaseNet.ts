@@ -30,6 +30,7 @@ export class SupabaseNet {
 
   onSlots(listener: (slots: SlotState[]) => void): void {
     this.listeners.push(listener);
+    listener(this.slots);
   }
 
   private notify(): void {

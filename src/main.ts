@@ -51,6 +51,7 @@ function loop(time: number) {
   const delta = time - lastTime;
   lastTime = time;
   if (running) {
+    lobbyUI.updateTimer(lobby.countdown);
     const target = input.consumeTarget();
     if (target) {
       input.input.target = target;
