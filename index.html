@@ -3,20 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-    <title>AI PACKMAN</title>
+    <title>MINOTAUR RUN</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div id="app">
       <header class="hud">
-        <div class="title">
-          <span class="logo">AI PACKMAN</span>
-          <a class="byline" href="https://www.oliverioduhalde.com" target="_blank" rel="noreferrer">www.oliverioduhalde.com</a>
+        <div class="brand">
+          <div class="title">MINOTAUR RUN</div>
+          <div class="subtitle">ESCAPE THE LABYRINTH</div>
         </div>
         <div class="stats">
+          <span id="status">LOBBY</span>
+          <span id="timer">60</span>
           <span id="score">SCORE 0000</span>
-          <span id="lives">LIVES 3</span>
-          <span id="level">LEVEL 1</span>
         </div>
       </header>
 
@@ -26,23 +26,34 @@
         <div class="vignette"></div>
       </div>
 
-      <div class="controls" id="controls">
-        <button data-dir="up" aria-label="Up">▲</button>
-        <button data-dir="left" aria-label="Left">◀</button>
-        <button data-dir="down" aria-label="Down">▼</button>
-        <button data-dir="right" aria-label="Right">▶</button>
-      </div>
-
-      <div id="overlay" class="overlay hidden">
+      <section class="lobby" id="lobby">
         <div class="panel">
-          <h1 id="overlay-title">AI PACKMAN</h1>
-          <p id="overlay-text">Tap or press P to play.</p>
-          <button id="overlay-btn">START</button>
+          <h1>LOBBY</h1>
+          <p>WAITING FOR PLAYERS…</p>
+          <div id="slots"></div>
+          <button id="start-btn">START NOW</button>
         </div>
-      </div>
+      </section>
+
+      <section class="options" id="options">
+        <div class="panel">
+          <h2>AUDIO</h2>
+          <label>
+            MUSIC
+            <input type="range" id="music" min="0" max="1" step="0.01" value="0.5" />
+          </label>
+          <label>
+            FX
+            <input type="range" id="fx" min="0" max="1" step="0.01" value="0.7" />
+          </label>
+          <div class="toggles">
+            <button data-toggle="music">MUSIC ON</button>
+            <button data-toggle="fx">FX ON</button>
+          </div>
+        </div>
+      </section>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
-    <script src="game.js"></script>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
